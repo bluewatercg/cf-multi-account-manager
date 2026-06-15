@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Vue 3 frontend
+frontend/node_modules/
+frontend/dist/
+static/dist/
+
+# Environment & secrets
+.env
+.env.*
+data/.local_secret
+
+# Config (user-specific, keep example)
+config.yaml
+
+# Database
+data/*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Windows reserved
+nul
+
+# Logs
+*.log
+
+# Vite
+frontend/.vite/
+
+# TypeScript build cache
+*.tsbuildinfo

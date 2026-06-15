@@ -1,0 +1,9 @@
+server:
+  host: 127.0.0.1
+  port: 8787
+sync:
+  default_interval_minutes: 30
+alerts:
+  warning_percent: 80
+  danger_percent: 90
+  critical_percent: 96
