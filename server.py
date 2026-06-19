@@ -37,9 +37,26 @@ SCHEMA=[
 "CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY AUTOINCREMENT,alert_key TEXT UNIQUE,account_db_id INTEGER,target_type TEXT,target_name TEXT,level TEXT,title TEXT,message TEXT,current_value REAL,threshold_value REAL,status TEXT DEFAULT 'open',first_triggered_at TEXT,last_triggered_at TEXT,resolved_at TEXT,raw_json TEXT)",
 "CREATE INDEX IF NOT EXISTS idx_workers_name ON workers(script_name)","CREATE INDEX IF NOT EXISTS idx_dns_name ON dns_records(name)","CREATE INDEX IF NOT EXISTS idx_dns_content ON dns_records(content)","CREATE INDEX IF NOT EXISTS idx_routes_pattern ON worker_routes(pattern)"
 ]
+USAGE_ACCOUNT_COLUMNS=[
+('workers_requests','INTEGER DEFAULT 0'),('workers_subrequests','INTEGER DEFAULT 0'),('workers_errors','INTEGER DEFAULT 0'),
+('pages_requests','INTEGER DEFAULT 0'),('pages_errors','INTEGER DEFAULT 0'),
+('d1_read_queries','INTEGER DEFAULT 0'),('d1_write_queries','INTEGER DEFAULT 0'),('d1_rows_read','INTEGER DEFAULT 0'),('d1_rows_written','INTEGER DEFAULT 0'),('d1_storage_bytes','INTEGER DEFAULT 0'),('d1_databases','INTEGER DEFAULT 0'),
+('kv_requests','INTEGER DEFAULT 0'),('kv_reads','INTEGER DEFAULT 0'),('kv_writes','INTEGER DEFAULT 0'),('kv_deletes','INTEGER DEFAULT 0'),('kv_lists','INTEGER DEFAULT 0'),('kv_storage_bytes','INTEGER DEFAULT 0'),('kv_keys','INTEGER DEFAULT 0'),('kv_namespaces','INTEGER DEFAULT 0'),
+('r2_requests','INTEGER DEFAULT 0'),('r2_class_a','INTEGER DEFAULT 0'),('r2_class_b','INTEGER DEFAULT 0'),('r2_free','INTEGER DEFAULT 0'),('r2_other','INTEGER DEFAULT 0'),('r2_storage_bytes','INTEGER DEFAULT 0'),('r2_objects','INTEGER DEFAULT 0'),('r2_buckets','INTEGER DEFAULT 0'),
+('cache_status','TEXT DEFAULT "unknown"'),
+('usage_details_json','TEXT'),('usage_errors_json','TEXT')
+]
+USAGE_CACHE_TTL_SECONDS=max(0,int(os.getenv('CFM_USAGE_CACHE_TTL_SECONDS','1200') or 0))
+R2_CLASS_A_ACTIONS={'listbuckets','putbucket','listobjects','listobjectsv2','putobject','copyobject','completemultipartupload','createmultipartupload','lifecyclestoragetiertransition','listmultipartuploads','uploadpart','uploadpartcopy','listparts','putbucketencryption','putbucketcors','putbucketlifecycleconfiguration'}
+R2_CLASS_B_ACTIONS={'headbucket','headobject','getobject','usagesummary','getbucketencryption','getbucketlocation','getbucketcors','getbucketlifecycleconfiguration'}
+R2_FREE_ACTIONS={'deleteobject','deleteobjects','deletebucket','abortmultipartupload'}
 def init_db():
     with db() as c:
         for s in SCHEMA: c.execute(s)
+        cols={r['name'] for r in c.execute('PRAGMA table_info(usage_account_daily)')}
+        for name,ddl in USAGE_ACCOUNT_COLUMNS:
+            if name not in cols: c.execute(f'ALTER TABLE usage_account_daily ADD COLUMN {name} {ddl}')
+        c.execute('UPDATE usage_account_daily SET workers_requests=requests,workers_subrequests=subrequests,workers_errors=errors WHERE usage_details_json IS NULL AND workers_requests=0 AND (requests<>0 OR subrequests<>0 OR errors<>0)')
         if c.execute('SELECT COUNT(*) c FROM sync_jobs').fetchone()['c']==0:
             t=now(); c.execute('INSERT INTO sync_jobs(name,job_type,interval_minutes,created_at,updated_at) VALUES(?,?,?,?,?)',('默认资产巡检','asset_sync',360,t,t)); c.execute('INSERT INTO sync_jobs(name,job_type,interval_minutes,created_at,updated_at) VALUES(?,?,?,?,?)',('默认用量巡检','usage_sync',30,t,t))
 # Build a proxy-aware opener that respects system proxy settings on Windows/Linux/Mac
@@ -133,42 +150,122 @@ def sync_assets(a):
         except Exception as e:
             c.execute('UPDATE accounts SET token_status="error",last_failed_sync_at=?,last_error=?,updated_at=? WHERE id=?',(t,str(e),t,a['id'])); c.execute('INSERT INTO sync_runs(account_db_id,run_type,status,started_at,finished_at,duration_ms,error_message,raw_summary_json) VALUES(?,?,?,?,?,?,?,?)',(a['id'],'asset_sync','failed',t,now(),int((time.time()-st)*1000),str(e),json.dumps(s))); c.commit(); raise
     return s
-GQL='query GetAccountWorkersAnalytics($accountTag: string, $datetimeStart: string, $datetimeEnd: string) { viewer { accounts(filter: {accountTag: $accountTag}) { workersInvocationsAdaptive(limit: 10000, filter: { datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd }) { sum { requests subrequests errors } quantiles { cpuTimeP50 cpuTimeP99 } dimensions { scriptName status } } } } }'
-def sync_usage(a):
+USAGE_GQL='''query GetUsageAnalytics($accountTag: string, $datetimeStart: string, $datetimeEnd: string, $dateStart: Date, $dateEnd: Date, $monthStart: Time) {
+  viewer { accounts(filter: {accountTag: $accountTag}) {
+    workersInvocationsAdaptive(limit: 10000, filter: { datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd }) { sum { requests subrequests errors } quantiles { cpuTimeP50 cpuTimeP99 } dimensions { scriptName status } }
+    pagesFunctionsInvocationsAdaptiveGroups(limit: 10000, filter: { datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd }) { sum { requests errors } }
+    d1AnalyticsAdaptiveGroups(limit: 10000, filter: { date_geq: $dateStart, date_leq: $dateEnd }) { sum { readQueries writeQueries rowsRead rowsWritten } dimensions { date databaseId } }
+    d1StorageAdaptiveGroups(limit: 10000, filter: { date_geq: $dateStart, date_leq: $dateEnd }, orderBy: [date_DESC]) { max { databaseSizeBytes } dimensions { date databaseId } }
+    kvOperationsAdaptiveGroups(limit: 10000, filter: { date_geq: $dateStart, date_leq: $dateEnd }) { sum { requests } dimensions { actionType } }
+    kvStorageAdaptiveGroups(limit: 10000, filter: { date_geq: $dateStart, date_leq: $dateEnd }, orderBy: [date_DESC]) { max { keyCount byteCount } dimensions { date namespaceId } }
+    r2OperationsAdaptiveGroups(limit: 10000, filter: { datetime_geq: $monthStart, datetime_leq: $datetimeEnd }) { sum { requests } dimensions { actionType actionStatus bucketName } }
+    r2StorageAdaptiveGroups(limit: 10000, filter: { datetime_geq: $monthStart, datetime_leq: $datetimeEnd }, orderBy: [datetime_DESC]) { max { objectCount uploadCount payloadSize metadataSize } dimensions { datetime bucketName } }
+  } }
+}'''
+def gql_account_rows(data,key):
+    return ((((data.get('data') or {}).get('viewer') or {}).get('accounts') or [{}])[0].get(key) or []) if data else []
+def sum_field(rows_,field):
+    return sum(int((r.get('sum') or {}).get(field) or 0) for r in rows_ if isinstance(r,dict))
+def account_node(data):
+    return (((data.get('data') or {}).get('viewer') or {}).get('accounts') or [{}])[0] if data else {}
+def latest_groups(groups,id_field,time_field):
+    out={}
+    for g in groups or []:
+        d=g.get('dimensions') or {}; k=d.get(id_field) or '__account'; tm=str(d.get(time_field) or '')
+        if k not in out or tm>=out[k][0]: out[k]=(tm,g)
+    return [v[1] for v in out.values()]
+def normalized_action(action):
+    return ''.join(ch for ch in str(action or '').lower() if ch.isalnum())
+def usage_window():
+    n=dt.datetime.now(dt.timezone.utc); day=n.date().isoformat(); month=dt.datetime(n.year,n.month,1,tzinfo=dt.timezone.utc)
+    return {'now':n.replace(microsecond=0).isoformat().replace('+00:00','Z'),'day':day,'day_start':day+'T00:00:00Z','month_start':month.isoformat().replace('+00:00','Z')}
+def fresh_usage_row(row,ttl=USAGE_CACHE_TTL_SECONDS):
+    if not row or ttl<=0 or not row['collected_at']: return False
+    try: collected=dt.datetime.fromisoformat(row['collected_at'].replace('Z','+00:00'))
+    except Exception: return False
+    return (dt.datetime.now(dt.timezone.utc)-collected).total_seconds()<ttl
+def build_usage_metrics(account):
+    s={'requests':0,'subrequests':0,'errors':0,'workers_requests':0,'workers_subrequests':0,'workers_errors':0,'pages_requests':0,'pages_errors':0,'d1_read_queries':0,'d1_write_queries':0,'d1_rows_read':0,'d1_rows_written':0,'d1_storage_bytes':0,'d1_databases':0,'kv_requests':0,'kv_reads':0,'kv_writes':0,'kv_deletes':0,'kv_lists':0,'kv_storage_bytes':0,'kv_keys':0,'kv_namespaces':0,'r2_requests':0,'r2_class_a':0,'r2_class_b':0,'r2_free':0,'r2_other':0,'r2_storage_bytes':0,'r2_objects':0,'r2_buckets':0}
+    workers_by={}
+    for row in account.get('workersInvocationsAdaptive') or []:
+        nm=(row.get('dimensions') or {}).get('scriptName') or '(unknown)'; sm=row.get('sum') or {}; qu=row.get('quantiles') or {}; x=workers_by.setdefault(nm,{'requests':0,'subrequests':0,'errors':0,'p50':None,'p99':None,'raw':[]})
+        x['requests']+=int(sm.get('requests') or 0); x['subrequests']+=int(sm.get('subrequests') or 0); x['errors']+=int(sm.get('errors') or 0); x['p50']=qu.get('cpuTimeP50'); x['p99']=qu.get('cpuTimeP99'); x['raw'].append(row)
+    for x in workers_by.values():
+        s['workers_requests']+=x['requests']; s['workers_subrequests']+=x['subrequests']; s['workers_errors']+=x['errors']
+    s['pages_requests']=sum_field(account.get('pagesFunctionsInvocationsAdaptiveGroups') or [],'requests'); s['pages_errors']=sum_field(account.get('pagesFunctionsInvocationsAdaptiveGroups') or [],'errors')
+    for row in account.get('d1AnalyticsAdaptiveGroups') or []:
+        sm=row.get('sum') or {}; s['d1_read_queries']+=int(sm.get('readQueries') or 0); s['d1_write_queries']+=int(sm.get('writeQueries') or 0); s['d1_rows_read']+=int(sm.get('rowsRead') or 0); s['d1_rows_written']+=int(sm.get('rowsWritten') or 0)
+    d1_storage=latest_groups(account.get('d1StorageAdaptiveGroups') or [],'databaseId','date'); s['d1_databases']=len(d1_storage); s['d1_storage_bytes']=sum(int((g.get('max') or {}).get('databaseSizeBytes') or 0) for g in d1_storage)
+    for row in account.get('kvOperationsAdaptiveGroups') or []:
+        req=int((row.get('sum') or {}).get('requests') or 0); action=str((row.get('dimensions') or {}).get('actionType') or '').lower(); s['kv_requests']+=req
+        if 'read' in action: s['kv_reads']+=req
+        elif 'write' in action: s['kv_writes']+=req
+        elif 'delete' in action: s['kv_deletes']+=req
+        elif 'list' in action: s['kv_lists']+=req
+    kv_storage=latest_groups(account.get('kvStorageAdaptiveGroups') or [],'namespaceId','date'); s['kv_namespaces']=len(kv_storage); s['kv_keys']=sum(int((g.get('max') or {}).get('keyCount') or 0) for g in kv_storage); s['kv_storage_bytes']=sum(int((g.get('max') or {}).get('byteCount') or 0) for g in kv_storage)
+    for row in account.get('r2OperationsAdaptiveGroups') or []:
+        dims=row.get('dimensions') or {}; status=str(dims.get('actionStatus') or 'success').lower()
+        if status and status!='success': continue
+        req=int((row.get('sum') or {}).get('requests') or 0); action=normalized_action(dims.get('actionType')); s['r2_requests']+=req
+        if action in R2_CLASS_A_ACTIONS: s['r2_class_a']+=req
+        elif action in R2_CLASS_B_ACTIONS: s['r2_class_b']+=req
+        elif action in R2_FREE_ACTIONS: s['r2_free']+=req
+        else: s['r2_other']+=req
+    r2_storage=latest_groups(account.get('r2StorageAdaptiveGroups') or [],'bucketName','datetime'); s['r2_buckets']=len(r2_storage); s['r2_objects']=sum(int((g.get('max') or {}).get('objectCount') or 0) for g in r2_storage); s['r2_storage_bytes']=sum(int((g.get('max') or {}).get('payloadSize') or 0)+int((g.get('max') or {}).get('metadataSize') or 0) for g in r2_storage)
+    s['requests']=s['workers_requests']+s['pages_requests']; s['subrequests']=s['workers_subrequests']; s['errors']=s['workers_errors']+s['pages_errors']
+    return s,workers_by
+USAGE_ALERT_LEVELS=(('critical',96),('danger',90),('warning',80))
+def sync_usage_alert(c,a,s,pct,t):
+    active=next(((level,thr) for level,thr in USAGE_ALERT_LEVELS if pct>=thr),None)
+    key=f'account_usage:{a["id"]}'; legacy=f'account_usage:{a["id"]}:%'
+    if not active:
+        c.execute('UPDATE alerts SET status="resolved",resolved_at=COALESCE(resolved_at,?) WHERE status="open" AND (alert_key=? OR alert_key LIKE ?)',(t,key,legacy))
+        return
+    level,thr=active
+    c.execute('UPDATE alerts SET status="resolved",resolved_at=COALESCE(resolved_at,?) WHERE status="open" AND alert_key LIKE ?',(t,legacy))
+    c.execute('INSERT INTO alerts(alert_key,account_db_id,target_type,target_name,level,title,message,current_value,threshold_value,status,first_triggered_at,last_triggered_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(alert_key) DO UPDATE SET level=excluded.level,title=excluded.title,message=excluded.message,current_value=excluded.current_value,threshold_value=excluded.threshold_value,status="open",last_triggered_at=excluded.last_triggered_at,resolved_at=NULL,raw_json=excluded.raw_json',(key,a['id'],'account',a['alias'],level,f'{a["alias"]} 用量 {pct}%',f'今日总用量 {s["requests"]}，使用率 {pct}%，超过 {thr}%',pct,thr,'open',t,t,json.dumps(s)))
+def sync_usage(a,force=False):
     cf=CFClient(dec(a['token_encrypted'])); t=now(); d=today(); st=time.time(); s={'requests':0,'subrequests':0,'errors':0,'api_calls':0}
     with db() as c:
         try:
-            data=cf.gql(GQL,{'accountTag':a['account_id'],'datetimeStart':d+'T00:00:00Z','datetimeEnd':t}); arr=((((data.get('data') or {}).get('viewer') or {}).get('accounts') or [{}])[0].get('workersInvocationsAdaptive') or [])
-            by={}
-            for row in arr:
-                nm=(row.get('dimensions') or {}).get('scriptName') or '(unknown)'; sm=row.get('sum') or {}; qu=row.get('quantiles') or {}; x=by.setdefault(nm,{'requests':0,'subrequests':0,'errors':0,'p50':None,'p99':None,'raw':[]})
-                x['requests']+=int(sm.get('requests') or 0); x['subrequests']+=int(sm.get('subrequests') or 0); x['errors']+=int(sm.get('errors') or 0); x['p50']=qu.get('cpuTimeP50'); x['p99']=qu.get('cpuTimeP99'); x['raw'].append(row)
+            cached=c.execute('SELECT * FROM usage_account_daily WHERE account_db_id=? AND date_utc=?',(a['id'],d)).fetchone()
+            if not force and fresh_usage_row(cached):
+                s=dict(cached); s.update({'api_calls':0,'cache_status':'fresh','cached':True})
+                c.execute('INSERT INTO sync_runs(account_db_id,run_type,status,started_at,finished_at,duration_ms,api_calls_count,raw_summary_json) VALUES(?,?,?,?,?,?,?,?)',(a['id'],'usage_sync','success',t,now(),int((time.time()-st)*1000),0,json.dumps(s)))
+                return s
+            w=usage_window(); vars_={'accountTag':a['account_id'],'datetimeStart':w['day_start'],'datetimeEnd':w['now'],'dateStart':w['day'],'dateEnd':w['day'],'monthStart':w['month_start']}
+            raw={}; usage_errors={}
+            data=cf.gql(USAGE_GQL,vars_); raw['combined']=data
+            if data.get('errors'): usage_errors['combined']=data.get('errors')
+            account=account_node(data)
+            if data.get('errors') and not account:
+                raise RuntimeError('; '.join(str((e or {}).get('message') or e) for e in data.get('errors') or []))
+            s,by=build_usage_metrics(account)
             for nm,x in by.items():
                 c.execute('INSERT INTO usage_worker_daily(account_db_id,script_name,date_utc,requests,subrequests,errors,cpu_time_p50,cpu_time_p99,collected_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_db_id,script_name,date_utc) DO UPDATE SET requests=excluded.requests,subrequests=excluded.subrequests,errors=excluded.errors,cpu_time_p50=excluded.cpu_time_p50,cpu_time_p99=excluded.cpu_time_p99,collected_at=excluded.collected_at,raw_json=excluded.raw_json',(a['id'],nm,d,x['requests'],x['subrequests'],x['errors'],x['p50'],x['p99'],t,json.dumps(x['raw']))); s['requests']+=x['requests']; s['subrequests']+=x['subrequests']; s['errors']+=x['errors']
+            s['requests']=s['workers_requests']+s['pages_requests']; s['subrequests']=s['workers_subrequests']; s['errors']=s['workers_errors']+s['pages_errors']; s.update({'usage_errors':usage_errors,'cache_status':'refreshed'})
             quota=int(a.get('daily_quota') or 100000); pct=round(s['requests']*100/quota,2) if quota else 0
-            c.execute('INSERT INTO usage_account_daily(account_db_id,date_utc,requests,subrequests,errors,usage_percent,quota,collected_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(account_db_id,date_utc) DO UPDATE SET requests=excluded.requests,subrequests=excluded.subrequests,errors=excluded.errors,usage_percent=excluded.usage_percent,quota=excluded.quota,collected_at=excluded.collected_at,raw_json=excluded.raw_json',(a['id'],d,s['requests'],s['subrequests'],s['errors'],pct,quota,t,json.dumps(data)))
-            for level,thr in [('critical',96),('danger',90),('warning',80)]:
-                if pct>=thr:
-                    c.execute('INSERT INTO alerts(alert_key,account_db_id,target_type,target_name,level,title,message,current_value,threshold_value,status,first_triggered_at,last_triggered_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(alert_key) DO UPDATE SET current_value=excluded.current_value,message=excluded.message,status="open",last_triggered_at=excluded.last_triggered_at',(f'account_usage:{a["id"]}:{level}',a['id'],'account',a['alias'],level,f'{a["alias"]} 用量 {pct}%',f'今日请求 {s["requests"]}，使用率 {pct}%，超过 {thr}%',pct,thr,'open',t,t,json.dumps(s))); break
+            c.execute('INSERT INTO usage_account_daily(account_db_id,date_utc,requests,subrequests,errors,usage_percent,quota,collected_at,raw_json,workers_requests,workers_subrequests,workers_errors,pages_requests,pages_errors,d1_read_queries,d1_write_queries,d1_rows_read,d1_rows_written,d1_storage_bytes,d1_databases,kv_requests,kv_reads,kv_writes,kv_deletes,kv_lists,kv_storage_bytes,kv_keys,kv_namespaces,r2_requests,r2_class_a,r2_class_b,r2_free,r2_other,r2_storage_bytes,r2_objects,r2_buckets,cache_status,usage_details_json,usage_errors_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_db_id,date_utc) DO UPDATE SET requests=excluded.requests,subrequests=excluded.subrequests,errors=excluded.errors,usage_percent=excluded.usage_percent,quota=excluded.quota,collected_at=excluded.collected_at,raw_json=excluded.raw_json,workers_requests=excluded.workers_requests,workers_subrequests=excluded.workers_subrequests,workers_errors=excluded.workers_errors,pages_requests=excluded.pages_requests,pages_errors=excluded.pages_errors,d1_read_queries=excluded.d1_read_queries,d1_write_queries=excluded.d1_write_queries,d1_rows_read=excluded.d1_rows_read,d1_rows_written=excluded.d1_rows_written,d1_storage_bytes=excluded.d1_storage_bytes,d1_databases=excluded.d1_databases,kv_requests=excluded.kv_requests,kv_reads=excluded.kv_reads,kv_writes=excluded.kv_writes,kv_deletes=excluded.kv_deletes,kv_lists=excluded.kv_lists,kv_storage_bytes=excluded.kv_storage_bytes,kv_keys=excluded.kv_keys,kv_namespaces=excluded.kv_namespaces,r2_requests=excluded.r2_requests,r2_class_a=excluded.r2_class_a,r2_class_b=excluded.r2_class_b,r2_free=excluded.r2_free,r2_other=excluded.r2_other,r2_storage_bytes=excluded.r2_storage_bytes,r2_objects=excluded.r2_objects,r2_buckets=excluded.r2_buckets,cache_status=excluded.cache_status,usage_details_json=excluded.usage_details_json,usage_errors_json=excluded.usage_errors_json',(a['id'],d,s['requests'],s['subrequests'],s['errors'],pct,quota,t,json.dumps(data),s['workers_requests'],s['workers_subrequests'],s['workers_errors'],s['pages_requests'],s['pages_errors'],s['d1_read_queries'],s['d1_write_queries'],s['d1_rows_read'],s['d1_rows_written'],s['d1_storage_bytes'],s['d1_databases'],s['kv_requests'],s['kv_reads'],s['kv_writes'],s['kv_deletes'],s['kv_lists'],s['kv_storage_bytes'],s['kv_keys'],s['kv_namespaces'],s['r2_requests'],s['r2_class_a'],s['r2_class_b'],s['r2_free'],s['r2_other'],s['r2_storage_bytes'],s['r2_objects'],s['r2_buckets'],s['cache_status'],json.dumps(raw),json.dumps(usage_errors)))
+            sync_usage_alert(c,a,s,pct,t)
             s['api_calls']=cf.calls; c.execute('UPDATE accounts SET last_success_sync_at=?,updated_at=? WHERE id=?',(t,t,a['id'])); c.execute('INSERT INTO sync_runs(account_db_id,run_type,status,started_at,finished_at,duration_ms,api_calls_count,raw_summary_json) VALUES(?,?,?,?,?,?,?,?)',(a['id'],'usage_sync','success',t,now(),int((time.time()-st)*1000),cf.calls,json.dumps(s)))
         except Exception as e:
             c.execute('UPDATE accounts SET token_status="error",last_failed_sync_at=?,last_error=?,updated_at=? WHERE id=?',(t,str(e),t,a['id'])); c.execute('INSERT INTO sync_runs(account_db_id,run_type,status,started_at,finished_at,duration_ms,error_message,raw_summary_json) VALUES(?,?,?,?,?,?,?,?)',(a['id'],'usage_sync','failed',t,now(),int((time.time()-st)*1000),str(e),json.dumps(s))); c.commit(); raise
 lock=threading.Lock()
-def run(kind,lock_acquired=False):
+def run(kind,lock_acquired=False,force=False):
     acquired=lock_acquired or lock.acquire(False)
     if not acquired: return False
     try:
         for a in accounts():
             try:
                 if kind in ('full_sync','asset_sync'): sync_assets(a)
-                if kind in ('full_sync','usage_sync'): sync_usage(a)
+                if kind in ('full_sync','usage_sync'): sync_usage(a,force=force)
             except Exception as e: print('sync failed',a.get('alias'),e)
         return True
     finally: lock.release()
-def start_run(kind):
+def start_run(kind,force=False):
     if not lock.acquire(False): return False
     try:
-        threading.Thread(target=lambda:run(kind,True),daemon=True).start()
+        threading.Thread(target=lambda:run(kind,True,force),daemon=True).start()
         return True
     except Exception:
         lock.release()
@@ -268,9 +365,16 @@ class H(BaseHTTPRequestHandler):
                     cur=c.execute('INSERT INTO accounts(alias,account_id,email_hint,token_encrypted,token_last4,token_status,daily_quota,enabled,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(d['alias'],d['account_id'],d.get('email_hint'),enc(d['token']),d['token'][-4:],token_status,int(d.get('daily_quota') or 100000),int(bool(d.get('enabled',1))),d.get('notes'),t,t)); nid=cur.lastrowid
                 return resp(self,{'ok':True,'id':nid,'token_status':token_status})
             if path=='/api/sync/run-now':
-                kind=body(self).get('kind') or 'full_sync'
-                if not start_run(kind): return resp(self,{'ok':False,'error':'已有巡检正在运行，请稍后再试'},409)
+                d=body(self); kind=d.get('kind') or 'full_sync'; force=bool(d.get('force'))
+                if not start_run(kind,force=force): return resp(self,{'ok':False,'error':'已有巡检正在运行，请稍后再试'},409)
                 return resp(self,{'ok':True,'started':True})
+            parts=path.strip('/').split('/')
+            if len(parts)==4 and parts[0]=='api' and parts[1]=='alerts' and parts[3]=='resolve':
+                aid=int(parts[2]); t=now()
+                with db() as c:
+                    cur=c.execute('UPDATE alerts SET status="resolved",resolved_at=? WHERE id=?',(t,aid))
+                    if cur.rowcount==0: return resp(self,{'error':'alert not found'},404)
+                return resp(self,{'ok':True})
             if path.startswith('/api/accounts/') and path.endswith('/test-token'):
                 aid=int(path.split('/')[3]); a=one('SELECT * FROM accounts WHERE id=?',(aid,))
                 if not a: return resp(self,{'success':False,'error':'account not found'},404)

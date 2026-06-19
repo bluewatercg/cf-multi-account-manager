@@ -8,7 +8,7 @@
 
 - 多账号管理：别名、Account ID、Token 尾号、Token 状态、额度、备注。
 - 资产巡检：Workers、Worker 自定义域名、Pages、Pages 域名、Zones、DNS 记录、Worker Routes。
-- 用量巡检：账号级 Worker 请求量、子请求、错误数、额度使用率。
+- 用量巡检：账号级 Workers/Pages 请求量、子请求、错误数、额度使用率，并采集 D1、KV、R2 的操作量和存储快照。
 - Worker 实时用量：在 Workers 页面直接展示请求、子请求、错误、CPU P50/P99 和采集时间。
 - Dashboard：账号数量、资产数量、今日用量、告警和最近巡检记录。
 - 全局搜索：Workers、Pages、域名、Zone、DNS 记录、Routes。
@@ -112,6 +112,7 @@ http://127.0.0.1:5173
 | `CFM_HOST` | `127.0.0.1` | Python 服务监听地址 |
 | `CFM_PORT` | `8787` | Python 服务端口 |
 | `CFM_NO_BROWSER` | `0` | 设为 `1` 时启动后不自动打开浏览器 |
+| `CFM_USAGE_CACHE_TTL_SECONDS` | `1200` | 用量巡检本地缓存 TTL；定时巡检在 TTL 内复用 SQLite 缓存，手动立即巡检会强制刷新 |
 
 示例：
 
@@ -152,7 +153,7 @@ py -3 server.py
 
 在 Usage 或 Workers 页面点击用量巡检按钮。
 
-Usage 页面只看账号级最新日期的实时数据；Worker 级用量已经集成到 Workers 页面，不再单独放一张 Worker 实时表。
+Usage 页面展示最新日期的请求额度趋势和 D1/KV/R2 资源额度明细。定时巡检会优先复用 TTL 内的本地缓存，减少 Cloudflare GraphQL 请求；点击“立即用量巡检”会强制刷新。
 
 ## 故障排查
 

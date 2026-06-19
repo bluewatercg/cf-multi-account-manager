@@ -119,6 +119,36 @@ export interface UsageAccountDaily {
   usage_percent: number
   quota: number
   collected_at: string
+  workers_requests: number
+  workers_subrequests: number
+  workers_errors: number
+  pages_requests: number
+  pages_errors: number
+  d1_read_queries: number
+  d1_write_queries: number
+  d1_rows_read: number
+  d1_rows_written: number
+  d1_storage_bytes: number
+  d1_databases: number
+  kv_requests: number
+  kv_reads: number
+  kv_writes: number
+  kv_deletes: number
+  kv_lists: number
+  kv_storage_bytes: number
+  kv_keys: number
+  kv_namespaces: number
+  r2_requests: number
+  r2_class_a: number
+  r2_class_b: number
+  r2_free: number
+  r2_other: number
+  r2_storage_bytes: number
+  r2_objects: number
+  r2_buckets: number
+  cache_status: 'unknown' | 'fresh' | 'refreshed'
+  usage_details_json: string | null
+  usage_errors_json: string | null
   account_alias: string
 }
 

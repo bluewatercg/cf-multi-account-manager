@@ -35,15 +35,29 @@ const usageChartOption = computed(() => {
       },
     }
   }
+  const quotaLimit = Math.max(...usage.map((u) => n(u.quota)), 100000)
+  const limitLine = {
+    silent: true,
+    symbol: 'none',
+    lineStyle: { color: '#dc2626', type: 'dashed', width: 2 },
+    label: {
+      formatter: `Limit ${quotaLimit.toLocaleString()}`,
+      color: '#dc2626',
+      fontWeight: 700,
+      position: 'insideEndTop',
+    },
+    data: [{ yAxis: quotaLimit }],
+  }
   return {
     tooltip: {
       trigger: 'axis',
       formatter: (params: any[]) => {
-        const item = params[0]
-        return `<b>${item.name}</b><br/>请求数: ${item.value.toLocaleString()}`
+        const lines = params.map((item) => `${item.marker}${item.seriesName}: ${Number(item.value || 0).toLocaleString()}`)
+        return `<b>${params[0]?.name ?? ''}</b><br/>${lines.join('<br/>')}`
       },
     },
-    grid: { left: 60, right: 20, top: 20, bottom: 40 },
+    legend: { top: 0, type: 'scroll' },
+    grid: { left: 60, right: 20, top: 42, bottom: 40 },
     xAxis: {
       type: 'category',
       data: usage.map((u) => u.account_alias),
@@ -56,21 +70,10 @@ const usageChartOption = computed(() => {
         formatter: (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)),
       },
     },
-    series: [{
-      type: 'bar',
-      data: usage.map((u) => u.requests),
-      itemStyle: {
-        borderRadius: [4, 4, 0, 0],
-        color: {
-          type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [
-            { offset: 0, color: '#2563eb' },
-            { offset: 1, color: '#93c5fd' },
-          ],
-        },
-      },
-      barMaxWidth: 48,
-    }],
+    series: [
+      { name: 'Workers', type: 'bar', stack: 'usage', data: usage.map((u) => n(u.workers_requests)), itemStyle: { color: '#2563eb' }, barMaxWidth: 48, markLine: limitLine },
+      { name: 'Pages', type: 'bar', stack: 'usage', data: usage.map((u) => n(u.pages_requests)), itemStyle: { color: '#0891b2' }, barMaxWidth: 48 },
+    ],
   }
 })
 
@@ -92,6 +95,14 @@ function formatDuration(ms: number | null): string {
 
 function formatNumber(value: number): string {
   return Number(value || 0).toLocaleString()
+}
+
+function n(value: number | null | undefined): number {
+  return Number(value || 0)
+}
+
+function d1Queries(row: any): number {
+  return n(row.d1_read_queries) + n(row.d1_write_queries)
 }
 
 function formatPercent(value: number): string {
@@ -146,8 +157,23 @@ onMounted(store.fetchSummary)
         style="width: 100%"
       >
         <el-table-column label="账号" prop="account_alias" min-width="180" />
-        <el-table-column label="请求" width="120" align="right">
+        <el-table-column label="请求" width="110" align="right">
           <template #default="{ row }">{{ formatNumber(row.requests) }}</template>
+        </el-table-column>
+        <el-table-column label="Workers" width="100" align="right">
+          <template #default="{ row }">{{ formatNumber(row.workers_requests) }}</template>
+        </el-table-column>
+        <el-table-column label="Pages" width="100" align="right">
+          <template #default="{ row }">{{ formatNumber(row.pages_requests) }}</template>
+        </el-table-column>
+        <el-table-column label="D1" width="90" align="right">
+          <template #default="{ row }">{{ formatNumber(d1Queries(row)) }}</template>
+        </el-table-column>
+        <el-table-column label="KV" width="90" align="right">
+          <template #default="{ row }">{{ formatNumber(row.kv_requests) }}</template>
+        </el-table-column>
+        <el-table-column label="R2" width="90" align="right">
+          <template #default="{ row }">{{ formatNumber(row.r2_requests) }}</template>
         </el-table-column>
         <el-table-column label="子请求" width="120" align="right">
           <template #default="{ row }">{{ formatNumber(row.subrequests) }}</template>
