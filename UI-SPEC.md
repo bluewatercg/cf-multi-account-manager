@@ -885,7 +885,7 @@ export const useAppStore = defineStore('app', () => {
 
 ```bash
 # 终端 1: Python 后端
-python server.py  # 运行在 localhost:8787
+npm run dev  # 本地开发预览
 
 # 终端 2: Vite 前端
 cd frontend && npm run dev  # 运行在 localhost:5173

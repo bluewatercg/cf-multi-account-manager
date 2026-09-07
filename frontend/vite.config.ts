@@ -4,9 +4,8 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
-export default defineConfig(({ mode }) => ({
-  // Python server serves the bundle below /static/dist; Pages serves it at root.
-  base: (globalThis as any).process?.env?.PAGES_BUILD === '1' ? '/' : (mode === 'production' ? '/static/dist/' : '/'),
+export default defineConfig(() => ({
+  base: '/',
   plugins: [
     vue(),
     AutoImport({

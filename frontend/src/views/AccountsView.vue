@@ -133,7 +133,6 @@ async function handleTest(id: number) {
   }
 }
 
-// 账号可能刚由本地迁移脚本写入 Pages，首次进入必须绕过短 TTL GET 缓存。
 onMounted(() => store.fetchAccounts(true))
 </script>
 

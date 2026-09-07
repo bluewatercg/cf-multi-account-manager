@@ -35,7 +35,7 @@ export const useAccountStore = defineStore('account', () => {
   }
 
   async function deleteAccount(id: number) {
-    await ElMessageBox.confirm('确定删除这个账号？只删除本地缓存，不会删除 Cloudflare 线上资源。', '确认删除', {
+    await ElMessageBox.confirm('确定删除这个账号？不会删除 Cloudflare 线上资源。', '确认删除', {
       confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning',
     })
     await api.delete(`/accounts/${id}`)
