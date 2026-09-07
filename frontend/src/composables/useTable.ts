@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 
 /**
  * 通用表格数据获取 composable
@@ -9,7 +9,11 @@ export function useTable<T>(url: string) {
   const data = ref<T[]>([])
   const loading = ref(false)
 
-  async function fetchData() {
+  /**
+   * @param force 为 true 时绕过 API 缓存强制重新拉取（刷新按钮用）
+   */
+  async function fetchData(force = false) {
+    if (force) invalidateApiCache(url)
     loading.value = true
     try {
       data.value = (await api.get<T[]>(url)).data

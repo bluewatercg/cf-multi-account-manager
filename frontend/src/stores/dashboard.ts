@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 import type { DashboardSummary } from '@/api/types'
 
 export const useDashboardStore = defineStore('dashboard', () => {
@@ -9,7 +9,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const loading = ref(false)
   const syncing = ref(false)
 
-  async function fetchSummary() {
+  async function fetchSummary(force = false) {
+    if (force) invalidateApiCache('/dashboard/summary')
     loading.value = true
     try {
       summary.value = (await api.get<DashboardSummary>('/dashboard/summary')).data
@@ -22,6 +23,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     syncing.value = true
     try {
       await api.post('/sync/run-now', { kind: 'full_sync' }, { headers: { 'X-Silent': '1' } })
+      invalidateApiCache()
       ElMessage.success('已启动后台巡检，请稍后刷新')
     } finally {
       syncing.value = false

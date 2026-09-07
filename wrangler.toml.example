@@ -1,0 +1,8 @@
+name = "your-pages-project-name"
+compatibility_date = "2026-09-05"
+pages_build_output_dir = "static/dist"
+
+[[d1_databases]]
+binding = "cf_manager"
+database_name = "cf-manager"
+database_id = "replace-with-your-d1-database-id"

@@ -1,14 +1,16 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 import type { Account } from '@/api/types'
 
 export const useAccountStore = defineStore('account', () => {
   const accounts = ref<Account[]>([])
   const loading = ref(false)
 
-  async function fetchAccounts() {
+  /** @param force 写操作后必须强制穿透缓存，否则读回的还是旧列表 */
+  async function fetchAccounts(force = false) {
+    if (force) invalidateApiCache('/accounts')
     loading.value = true
     try {
       accounts.value = (await api.get<Account[]>('/accounts')).data
@@ -22,13 +24,13 @@ export const useAccountStore = defineStore('account', () => {
     token: string; daily_quota?: number; enabled?: boolean; notes?: string;
   }) {
     const res = (await api.post<{ ok: boolean; id: number; token_status: string }>('/accounts', d)).data
-    await fetchAccounts()
+    await fetchAccounts(true)
     return res
   }
 
   async function updateAccount(id: number, d: Partial<Account> & { token?: string }) {
     const res = (await api.put<{ ok: boolean; token_status: string }>(`/accounts/${id}`, d)).data
-    await fetchAccounts()
+    await fetchAccounts(true)
     return res
   }
 
@@ -38,12 +40,12 @@ export const useAccountStore = defineStore('account', () => {
     })
     await api.delete(`/accounts/${id}`)
     ElMessage.success('账号已删除')
-    await fetchAccounts()
+    await fetchAccounts(true)
   }
 
   async function testToken(id: number) {
     const r = (await api.post(`/accounts/${id}/test-token`, {}, { headers: { 'X-Silent': '1' } })).data
-    await fetchAccounts()
+    await fetchAccounts(true)
     if (r.success) {
       ElMessage.success('Token 检测通过')
     } else {

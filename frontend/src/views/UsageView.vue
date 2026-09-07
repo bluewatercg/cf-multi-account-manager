@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import VChart from 'vue-echarts'
 import '@/utils/echarts'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 import { formatBeijingTime } from '@/utils/time'
 import type { UsageAccountDaily } from '@/api/types'
 
@@ -20,7 +20,8 @@ const RESOURCE_LIMITS = {
   r2StorageBytes: 10 * 1024 * 1024 * 1024,
 }
 
-async function loadUsage() {
+async function loadUsage(force = false) {
+  if (force) invalidateApiCache('/usage/accounts')
   loading.value = true
   try {
     accountUsage.value = (await api.get<UsageAccountDaily[]>('/usage/accounts')).data
@@ -31,7 +32,9 @@ async function loadUsage() {
 
 async function runUsageSync() {
   await api.post('/sync/run-now', { kind: 'usage_sync', force: true }, { headers: { 'X-Silent': '1' } })
-  window.setTimeout(loadUsage, 2500)
+  // 巡检在后台跑，先失效缓存，稍后再拉时拿到的是新数据
+  invalidateApiCache()
+  window.setTimeout(() => loadUsage(true), 2500)
 }
 
 const currentUsageDate = computed(() => accountUsage.value[0]?.date_utc || '')
@@ -164,7 +167,7 @@ onMounted(loadUsage)
       <h2>用量 Usage</h2>
       <div class="topbar-actions">
         <el-button type="primary" @click="runUsageSync">立即用量巡检</el-button>
-        <el-button @click="loadUsage">刷新</el-button>
+        <el-button @click="loadUsage(true)">刷新</el-button>
       </div>
     </div>
 

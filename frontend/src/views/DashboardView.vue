@@ -126,7 +126,7 @@ onMounted(store.fetchSummary)
         <el-button type="primary" :loading="store.syncing" @click="store.runFullSync()">
           立即全量巡检
         </el-button>
-        <el-button :icon="Refresh" @click="store.fetchSummary()">刷新</el-button>
+        <el-button :icon="Refresh" @click="store.fetchSummary(true)">刷新</el-button>
       </div>
     </div>
 

@@ -5,7 +5,8 @@ import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig(({ mode }) => ({
-  base: mode === 'production' ? '/static/dist/' : '/',
+  // Python server serves the bundle below /static/dist; Pages serves it at root.
+  base: (globalThis as any).process?.env?.PAGES_BUILD === '1' ? '/' : (mode === 'production' ? '/static/dist/' : '/'),
   plugins: [
     vue(),
     AutoImport({
@@ -27,11 +28,6 @@ export default defineConfig(({ mode }) => ({
   },
   optimizeDeps: {
     include: [
-      'echarts/core',
-      'echarts/renderers',
-      'echarts/charts',
-      'echarts/components',
-      'vue-echarts',
       'element-plus',
       '@element-plus/icons-vue',
     ],
@@ -48,5 +44,15 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: '../static/dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        // 注意：不要用 manualChunks 强制合并 element-plus / echarts。
+        // 该应用通过 unplugin 按需引入 EP 组件 + 路由懒加载图表，Rollup 的
+        // 标准自动分包能正确生成无环的 chunk 图；强制合并会触发跨 chunk
+        // 循环引用，导致运行时 “X is not a function” 初始化错误。
+        manualChunks: undefined,
+      },
+    },
   },
 }))

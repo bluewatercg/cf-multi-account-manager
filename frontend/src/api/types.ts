@@ -29,6 +29,7 @@ export interface Worker {
   account_alias: string
   custom_domains?: string | null
   custom_domains_count?: number
+  notes: string | null
 }
 
 /** Pages 项目 */
@@ -46,6 +47,12 @@ export interface PagesProject {
   account_alias: string
   domains_count?: number
   custom_domains?: string | null
+  usage_requests?: number | null
+  usage_errors?: number | null
+  usage_date_utc?: string | null
+  usage_collected_at?: string | null
+  usage_scope?: 'account_pages'
+  notes: string | null
 }
 
 /** Pages 自定义域名 */

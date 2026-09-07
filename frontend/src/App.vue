@@ -3,9 +3,9 @@ import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { ElConfigProvider } from 'element-plus'
 import {
-  Odometer, User, Search, Setting, Document, Location,
+  Odometer, User, Search, Setting, Location,
   Link, DataAnalysis, Clock, Bell,
-  Fold, Expand, Sunny, Moon, Menu,
+  Fold, Expand, Sunny, Moon, Menu, DocumentChecked,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -16,17 +16,20 @@ const navItems: NavItem[] = [
   { path: '/dashboard',  label: '总览 Dashboard',  icon: Odometer },
   { path: '/accounts',   label: '账号 Accounts',   icon: User },
   { path: '/search',     label: '全局搜索',         icon: Search },
-  { path: '/workers',    label: 'Workers',          icon: Setting },
-  { path: '/pages',      label: 'Pages',            icon: Document },
+  { path: '/workers',    label: 'Workers / Pages',  icon: Setting },
   { path: '/zones',      label: '域名 Zones',       icon: Location },
   { path: '/dns',        label: 'DNS 记录',         icon: DataAnalysis },
   { path: '/routes',     label: 'Routes',           icon: Link },
   { path: '/usage',      label: '用量 Usage',       icon: DataAnalysis },
   { path: '/jobs',       label: '巡检 Jobs',        icon: Clock },
   { path: '/alerts',     label: '告警 Alerts',      icon: Bell },
+  { path: '/review',     label: '审查 Review',       icon: DocumentChecked },
 ]
 
-function isActive(p: string) { return route.path === p }
+function isActive(p: string) {
+  if (p === '/workers') return route.path === '/workers' || route.path === '/pages'
+  return route.path === p
+}
 </script>
 
 <template>

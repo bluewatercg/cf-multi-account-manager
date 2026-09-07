@@ -30,8 +30,8 @@ onMounted(fetchData)
         <el-tag v-if="filterZone" closable @close="$router.push('/dns')">
           Zone: {{ filterZone }}
         </el-tag>
-        <SyncButton kind="asset_sync" label="立即资产巡检" @synced="fetchData" />
-        <el-button @click="fetchData">刷新</el-button>
+        <SyncButton kind="asset_sync" label="立即资产巡检" @synced="fetchData(true)" />
+        <el-button @click="fetchData(true)">刷新</el-button>
       </div>
     </div>
 

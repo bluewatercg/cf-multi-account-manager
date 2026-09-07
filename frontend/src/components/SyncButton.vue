@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 
 const props = defineProps<{
   kind: 'full_sync' | 'usage_sync' | 'asset_sync'
@@ -18,6 +18,8 @@ async function handleClick() {
   loading.value = true
   try {
     await api.post('/sync/run-now', { kind: props.kind }, { headers: { 'X-Silent': '1' } })
+    // 巡检在后台跑，数据尚未更新：先让缓存全部失效，避免之后看到旧数据
+    invalidateApiCache()
     ElMessage.success('已启动后台巡检，请稍后刷新')
     emit('synced')
   } finally {

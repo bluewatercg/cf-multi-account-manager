@@ -22,6 +22,7 @@ config.yaml
 
 # Database
 data/*.db
+data/*.db-*
 
 # IDE
 .vscode/
@@ -45,3 +46,8 @@ frontend/.vite/
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Local Cloudflare tooling state
+.wrangler/
+.workbuddy/
+wrangler.toml

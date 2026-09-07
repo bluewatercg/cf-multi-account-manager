@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 import { formatBeijingTime } from '@/utils/time'
 import type { SyncJob, SyncRun } from '@/api/types'
 
@@ -22,7 +22,8 @@ function runStatusLabel(status: SyncRun['status']): string {
   return '运行中'
 }
 
-async function loadData() {
+async function loadData(force = false) {
+  if (force) invalidateApiCache('/sync/')
   loading.value = true
   try {
     const [j, r] = await Promise.all([
@@ -43,7 +44,7 @@ onMounted(loadData)
   <div class="jobs-page" v-loading="loading">
     <div class="page-topbar">
       <h2>巡检 Jobs</h2>
-      <el-button @click="loadData">刷新</el-button>
+      <el-button @click="loadData(true)">刷新</el-button>
     </div>
 
     <div class="section-card">

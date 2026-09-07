@@ -16,8 +16,8 @@ onMounted(fetchData)
     <div class="page-topbar">
       <h2>域名 Zones</h2>
       <div class="topbar-actions">
-        <SyncButton kind="asset_sync" label="立即资产巡检" @synced="fetchData" />
-        <el-button @click="fetchData">刷新</el-button>
+        <SyncButton kind="asset_sync" label="立即资产巡检" @synced="fetchData(true)" />
+        <el-button @click="fetchData(true)">刷新</el-button>
       </div>
     </div>
 

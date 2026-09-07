@@ -73,6 +73,80 @@ py -3 server.py
 http://127.0.0.1:8787
 ```
 
+## Cloudflare Pages 部署
+
+Pages 部署包含 Vue 静态前端、Pages Functions API 和 D1 数据库。首次部署按下面顺序执行；日常发布只需要重新构建和 `pages deploy`，不会重建或清空 D1。
+
+### 1. 安装并登录 Wrangler
+
+```powershell
+npm install -g wrangler
+wrangler login
+wrangler whoami
+```
+
+### 2. 创建 Pages 项目和 D1
+
+```powershell
+npx wrangler pages project create <pages-project-name> --production-branch main
+npx wrangler d1 create <d1-database-name>
+```
+
+将 `wrangler.toml.example` 复制为本地 `wrangler.toml`，填入 Pages 项目名和 D1 返回的 `database_id`。`wrangler.toml` 已被 `.gitignore` 排除，不要提交真实账号或数据库配置。
+
+### 3. 初始化 D1（只执行一次）
+
+```powershell
+npx wrangler d1 migrations apply <d1-database-name> --remote
+```
+
+当前 migrations 会创建账号和资源表。以后新增表结构时只添加新的 migration 文件，再执行同一条命令；已应用的 migration 不会重复执行。不要删除数据库，也不要用裸 `d1 execute` 重放旧 migration。
+
+### 4. 配置登录密码
+
+密码只保存为 Pages Secret，不写入代码、`wrangler.toml` 或命令历史：
+
+```powershell
+npx wrangler pages secret put ADMIN --project-name <pages-project-name>
+```
+
+### 5. 构建并发布
+
+```powershell
+cd frontend
+npm install
+npm run build:pages
+cd ..
+npx wrangler pages deploy static/dist --project-name <pages-project-name> --branch main
+```
+
+访问 `https://<pages-project-name>.pages.dev/login`，使用刚配置的 `ADMIN` 密码登录。生产构建使用根资源路径；本地 Python 生产服务使用普通 `npm run build`。
+
+### 6. 同步本地账号
+
+同步脚本从本地 SQLite 读取并解密 Token，通过登录后的 HTTPS 请求写入 D1；Token 不会打印或写入临时文件。请保留本地数据库和 `.local_secret`，然后执行：
+
+```powershell
+py scripts/sync_accounts_to_pages.py --url https://<pages-project-name>.pages.dev
+```
+
+脚本会交互式要求输入 `ADMIN` 密码，默认同步启用账号；追加 `--all` 可包含停用账号。按 Account ID 去重，重复执行不会重复添加。
+
+### 7. 手动巡检
+
+登录后在 Dashboard、Workers、Pages 或 Usage 页面点击巡检按钮。巡检由 Pages Function 直接访问 Cloudflare API，不依赖本机代理；账号和巡检资源写入 D1，重新发布不会丢失。
+
+### 日常更新
+
+```powershell
+cd frontend
+npm run build:pages
+cd ..
+npx wrangler pages deploy static/dist --project-name <pages-project-name> --branch main
+```
+
+不要在日常更新中重新创建 D1、删除 D1，或重复执行旧 migration。
+
 macOS 或 Linux 可以用：
 
 ```bash

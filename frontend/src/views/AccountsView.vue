@@ -17,6 +17,7 @@ const formRef = ref<FormInstance>()
 const formLoading = ref(false)
 const verifyStatus = ref<'idle' | 'verifying' | 'ok' | 'error'>('idle')
 const verifyError = ref('')
+const testingIds = ref<Set<number>>(new Set())
 
 const form = reactive({
   id: 0,
@@ -119,10 +120,21 @@ async function handleDelete(id: number) {
 }
 
 async function handleTest(id: number) {
-  await store.testToken(id)
+  if (testingIds.value.has(id)) return
+  testingIds.value = new Set(testingIds.value).add(id)
+  try {
+    await store.testToken(id)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || e?.message || 'Token 检测请求失败')
+  } finally {
+    const next = new Set(testingIds.value)
+    next.delete(id)
+    testingIds.value = next
+  }
 }
 
-onMounted(store.fetchAccounts)
+// 账号可能刚由本地迁移脚本写入 Pages，首次进入必须绕过短 TTL GET 缓存。
+onMounted(() => store.fetchAccounts(true))
 </script>
 
 <template>
@@ -168,7 +180,7 @@ onMounted(store.fetchAccounts)
       <el-table-column label="操作" width="220" fixed="right" align="center">
         <template #default="{ row }">
           <el-button size="small" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" type="info" @click="handleTest(row.id)">检测</el-button>
+          <el-button size="small" type="info" :loading="testingIds.has(row.id)" @click="handleTest(row.id)">{{ testingIds.has(row.id) ? '检测中' : '检测' }}</el-button>
           <el-button size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
         </template>
       </el-table-column>

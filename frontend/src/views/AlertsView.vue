@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Check, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import api from '@/api'
+import api, { invalidateApiCache } from '@/api'
 import { formatBeijingTime } from '@/utils/time'
 import type { Alert } from '@/api/types'
 
@@ -10,7 +10,8 @@ const alerts = ref<Alert[]>([])
 const loading = ref(false)
 const resolvingId = ref<number | null>(null)
 
-async function loadAlerts() {
+async function loadAlerts(force = false) {
+  if (force) invalidateApiCache('/alerts')
   loading.value = true
   try {
     alerts.value = (await api.get<Alert[]>('/alerts')).data
@@ -150,7 +151,7 @@ async function resolveAlert(row: Alert) {
   try {
     await api.post(`/alerts/${row.id}/resolve`)
     ElMessage.success('已标记为已处理')
-    await loadAlerts()
+    await loadAlerts(true)
   } finally {
     resolvingId.value = null
   }
@@ -163,7 +164,7 @@ onMounted(loadAlerts)
   <div class="alerts-page" v-loading="loading">
     <div class="page-topbar">
       <h2>告警 Alerts</h2>
-      <el-button :icon="Refresh" @click="loadAlerts">刷新</el-button>
+      <el-button :icon="Refresh" @click="loadAlerts(true)">刷新</el-button>
     </div>
 
     <el-table :data="alerts" row-key="id" stripe empty-text="暂无告警" style="width: 100%" :default-sort="{ prop: 'level', order: 'ascending' }">
